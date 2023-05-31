@@ -20,6 +20,7 @@ library(lmtest)
 library(MuMIn)
 library(broom)
 library(reshape2)
+library(ggplot2)
 
 # LOAD DATA ---------------------------------------------------------------------
   nc <- nc_open("./data/nceiErsstv5_4ec2_7c0e_3c10.nc")
@@ -126,37 +127,64 @@ library(reshape2)
 # SIMULATING TIMESERIES ---------------------------------------------------------
   
 # Specify data frame to hold function outputs
-out <- as.data.frame(matrix(NA, nrow = length(ar), ncol = 6))
-colnames(out) <- c("iter", "ar", "ar1", "AIC.1", "AIC.2", "dAIC")
+out <- as.data.frame(matrix(NA, nrow = length(ar)*length(thr), ncol = 10))
+colnames(out) <- c("thr", "iter", "ar", "ar1", "AIC.1", "AIC.2", "dAIC", "dAIC.thr", "p_stat", "p_nstat")
+
+dat.thr <- data.frame(pc1=pca$x[,1], sst.3=sst.3[names(sst.3) %in% 1965:2012], year=1965:2012)
+thr <- 1974:2002 # these candidate thresholds maintain at least 20% of the data in each era
 
 # Create function to simulate ts and record function outputs
-  ts.sim <- function(dat, iter){
-     for(ii in 1:length(ar)){
-       #Generate random ts
-       ts.sim <- arima.sim(model = list(order = c(1,0,0), ar = ar[ii]), n = 48)
-       
-       #Calculate autocorrelation at lag 1
-       ar1 <- acf(ts.sim)$acf[2]
-       
-       #Bind simulated ts with sst and era data
-       dat %>%
-         select(!pc1) %>%
-         cbind(., ts.sim) -> sim.dat
-       
-       #Run models with both terms
-       mod1 <- gls(ts.sim ~ sst, data = sim.dat, correlation = corAR1())
-       mod2 <- gls(ts.sim ~ sst*era, data = sim.dat, correlation = corAR1())
-       
-       #Calculate model AICs and difference between
-       AIC.1 <- AICc(mod1)
-       AIC.2 <- AICc(mod2)
-       
-       dAIC <- AIC.1 - AIC.2
-       
-       #Save metrics in data frame
-       out[ii,] <- data.frame(iter = iter, ar = ar[ii], ar1 = ar1,AIC.1 = AIC.1, AIC.2 = AIC.2, dAIC = dAIC)
-     }
-  
+  ts.simul <- function(dat, dat.thr, iter){
+   
+    for(i in 1:length(thr)){ # loop each threshold
+      # i <-1
+      dat.thr$era <- "early"
+      dat.thr$era[dat.thr$year > thr[i]] <- "late"
+      
+      for(ii in 1:length(ar)){
+        #Generate random ts
+        ts.sim <- arima.sim(model = list(order = c(1,0,0), ar = ar[ii]), n = 48)
+        
+        #Calculate autocorrelation at lag 1
+        ar1 <- acf(ts.sim)$acf[2]
+        
+        #Bind simulated ts with sst and era data
+        dat %>%
+          select(!pc1) %>%
+          cbind(., ts.sim) -> sim.dat
+        
+        dat.thr %>%
+          select(!pc1) %>%
+          cbind(.,ts.sim) -> sim.dat.thr
+        
+        #Run models with both terms
+        mod1 <- gls(ts.sim ~ sst, data = sim.dat, correlation = corAR1())
+        mod2 <- gls(ts.sim ~ sst*era, data = sim.dat, correlation = corAR1())
+        
+        mod1.thr <- gls(ts.sim ~ sst.3, data = sim.dat.thr, correlation = corAR1())
+        mod2.thr <- gls(ts.sim ~ sst.3*era, data = sim.dat.thr, correlation = corAR1())
+        
+        #Calculate model AICs and difference between
+        AIC.1 <- AICc(mod1)
+        AIC.2 <- AICc(mod2)
+        
+        dAIC <- AIC.1 - AIC.2
+        
+        AIC.1.thr <- AICc(mod1.thr)
+        AIC.2.thr <- AICc(mod2.thr)
+        
+        dAIC.thr <- AIC.1.thr - AIC.2.thr
+        
+        p_stat <- summary(mod1)$tTable[2,4]
+        p_nstat <- summary(mod2)$tTable[2,4]
+        
+        #Save metrics in data frame
+        out[ii,] <- data.frame(thr[i], iter = iter, ar = ar[ii], ar1 = ar1,AIC.1 = AIC.1, AIC.2 = AIC.2, dAIC = dAIC,
+                               dAIC.thr = dAIC.thr,
+                               p_stat = p_stat, p_nstat = p_nstat)
+      }
+      
+    }
       return(list(out))
     
   }
@@ -169,22 +197,48 @@ colnames(out) <- c("iter", "ar", "ar1", "AIC.1", "AIC.2", "dAIC")
 
 # Run function
   iter %>%
-    purrr::map_df(~ts.sim(dat, .x)) -> sim.out
+    purrr::map_df(~ts.simul(dat, dat.thr, .x)) -> sim.out
 
 # Bin data, calculate proportion of dAIC values >= 1 in each bin
   sim.out %>%
-    mutate(bin = case_when((abs(ar1) <= 0.2) ~ "≤0.2",
-                           (abs(ar1) > 0.2 & abs(ar1) <= 0.4) ~ "0.21-0.4",
-                           (abs(ar1) > 0.4 & abs(ar1) <= 0.6) ~ "0.41-0.6",
-                           (abs(ar1) > 0.6 & abs(ar1) <= 0.8) ~ "0.61-0.8",
-                           (abs(ar1) > 0.8 & abs(ar1) <= 1) ~ "0.81-1")) %>%
+    mutate(bin = case_when((abs(ar1) <= 0.1) ~ "≤0.1",
+                           (abs(ar1) > 0.1 & abs(ar1) <= 0.2) ~ "0.11-0.2",
+                           (abs(ar1) > 0.2 & abs(ar1) <= 0.3) ~ "0.21-0.3",
+                           (abs(ar1) > 0.3 & abs(ar1) <= 0.4) ~ "0.31-0.4",
+                           (abs(ar1) > 0.4 & abs(ar1) <= 0.5) ~ "0.41-0.5",
+                           (abs(ar1) > 0.5 & abs(ar1) <= 0.6) ~ "0.51-0.6",
+                           (abs(ar1) > 0.6 & abs(ar1) <= 0.7) ~ "0.61-0.7",
+                           (abs(ar1) > 0.7 & abs(ar1) <= 0.8) ~ "0.71-0.8",
+                           (abs(ar1) > 0.8 & abs(ar1) <= 0.9) ~ "0.81-0.9",
+                           (abs(ar1) > 0.9 & abs(ar1) <= 1) ~ "0.91-1")) -> binned.dat
+    
+  binned.dat %>%
           group_by(bin) %>%
           reframe(N = n(),
                   n_pos = sum(dAIC >=1),
                   prop_pos = n_pos/N) -> plot.dat
+  
+  binned.dat %>%
+    filter(iter %in% 1:500) %>%
+    melt(c("p_stat", "p_nstat"), id.vars = "bin") %>%
+    mutate(variable = ifelse(variable == "p_stat", "Stationary", "Non-stationary")) %>%
+    group_by(bin, variable) %>%
+    reframe(N = n(),
+            n_sig = sum(value <0.05),
+            prop_sig = n_sig/N) -> p.dat
+   
+    
 
 # Plot
+  ggplot(p.dat, aes(x = bin, y = prop_sig, color = variable, group = variable)) +
+    geom_line(size = 1) +
+    geom_point()
+    theme_minimal() +
+    xlab("AR(1)")+
+    ylab("Proportion p<0.05")
+  
   ggplot(plot.dat, aes(x = bin, y = prop_pos)) +
+    geom_line(group = 1)+
     geom_point() +
     theme_minimal() +
     xlab("AR(1)")+
