@@ -127,66 +127,70 @@ library(ggplot2)
 # SIMULATING TIMESERIES ---------------------------------------------------------
   
 # Specify data frame to hold function outputs
-out <- as.data.frame(matrix(NA, nrow = length(ar)*length(thr), ncol = 10))
-colnames(out) <- c("thr", "iter", "ar", "ar1", "AIC.1", "AIC.2", "dAIC", "dAIC.thr", "p_stat", "p_nstat")
+out <- as.data.frame(matrix(NA, nrow = length(ar), ncol = 10))
+colnames(out) <- c("iter", "thr", "ar", "ar1", "AIC.1", "AIC.2", "dAIC", "dAIC.thr", "p_stat", "p_nstat")
 
 dat.thr <- data.frame(pc1=pca$x[,1], sst.3=sst.3[names(sst.3) %in% 1965:2012], year=1965:2012)
-thr <- 1974:2002 # these candidate thresholds maintain at least 20% of the data in each era
+thresh <- 1974:2002 # these candidate thresholds maintain at least 20% of the data in each era
 
 # Create function to simulate ts and record function outputs
-  ts.simul <- function(dat, dat.thr, iter){
+thr.fun <- function(dat.thr, thr){
+  dat.thr$era <- "early"
+  dat.thr$era[dat.thr$year > thr] <- "late"
+  
+  return(cbind(thr, dat.thr))
+}
+
+thresh %>%
+  map_df(~thr.fun(dat.thr, .x)) -> dat.thr
+
+ts.simul <- function(dat, dat.thr, thresh){
    
-    for(i in 1:length(thr)){ # loop each threshold
-      # i <-1
-      dat.thr$era <- "early"
-      dat.thr$era[dat.thr$year > thr[i]] <- "late"
+  dat.thresh <- filter(dat.thr, thr == thresh)
       
-      for(ii in 1:length(ar)){
-        #Generate random ts
-        ts.sim <- arima.sim(model = list(order = c(1,0,0), ar = ar[ii]), n = 48)
+  for(ii in 1:length(ar)){
+      #Generate random ts
+      ts.sim <- arima.sim(model = list(order = c(1,0,0), ar = ar[ii]), n = 48)
         
-        #Calculate autocorrelation at lag 1
-        ar1 <- acf(ts.sim)$acf[2]
+      #Calculate autocorrelation at lag 1
+      ar1 <- acf(ts.sim)$acf[2]
         
-        #Bind simulated ts with sst and era data
-        dat %>%
-          select(!pc1) %>%
-          cbind(., ts.sim) -> sim.dat
+      #Bind simulated ts with sst and era data
+      dat %>%
+        select(!pc1) %>%
+        cbind(., ts.sim) -> sim.dat
         
-        dat.thr %>%
-          select(!pc1) %>%
-          cbind(.,ts.sim) -> sim.dat.thr
+      dat.thresh %>%
+        select(!pc1) %>%
+        cbind(.,ts.sim) -> sim.dat.thr
         
-        #Run models with both terms
-        mod1 <- gls(ts.sim ~ sst, data = sim.dat, correlation = corAR1())
-        mod2 <- gls(ts.sim ~ sst*era, data = sim.dat, correlation = corAR1())
+      #Run models with both terms
+      mod1 <- gls(ts.sim ~ sst, data = sim.dat, correlation = corAR1())
+      mod2 <- gls(ts.sim ~ sst*era, data = sim.dat, correlation = corAR1())
         
-        mod1.thr <- gls(ts.sim ~ sst.3, data = sim.dat.thr, correlation = corAR1())
-        mod2.thr <- gls(ts.sim ~ sst.3*era, data = sim.dat.thr, correlation = corAR1())
+      mod1.thr <- gls(ts.sim ~ sst.3, data = sim.dat.thr, correlation = corAR1())
+      mod2.thr <- gls(ts.sim ~ sst.3*era, data = sim.dat.thr, correlation = corAR1())
         
-        #Calculate model AICs and difference between
-        AIC.1 <- AICc(mod1)
-        AIC.2 <- AICc(mod2)
+      #Calculate model AICs and difference between
+      AIC.1 <- AICc(mod1)
+      AIC.2 <- AICc(mod2)
         
-        dAIC <- AIC.1 - AIC.2
+      dAIC <- AIC.1 - AIC.2
         
-        AIC.1.thr <- AICc(mod1.thr)
-        AIC.2.thr <- AICc(mod2.thr)
+      AIC.1.thr <- AICc(mod1.thr)
+      AIC.2.thr <- AICc(mod2.thr)
         
-        dAIC.thr <- AIC.1.thr - AIC.2.thr
+      dAIC.thr <- AIC.1.thr - AIC.2.thr
         
-        p_stat <- summary(mod1)$tTable[2,4]
-        p_nstat <- summary(mod2)$tTable[2,4]
-        
-        #Save metrics in data frame
-        out[ii,] <- data.frame(thr[i], iter = iter, ar = ar[ii], ar1 = ar1,AIC.1 = AIC.1, AIC.2 = AIC.2, dAIC = dAIC,
-                               dAIC.thr = dAIC.thr,
-                               p_stat = p_stat, p_nstat = p_nstat)
-      }
+      p_stat <- summary(mod1)$tTable[2,4]
+      p_nstat <- summary(mod2)$tTable[2,4]
       
+      out[ii,] <- data.frame(iter = iter, thr = thresh, ar = ar[ii], ar1 = ar1,AIC.1 = AIC.1, AIC.2 = AIC.2, 
+                              dAIC = dAIC, dAIC.thr = dAIC.thr, p_stat = p_stat, p_nstat = p_nstat)
+        
     }
-      return(list(out))
-    
+      
+    return(out)
   }
 
 # Specify range of autocorrelation params, # of iterations, and data to use
@@ -196,8 +200,10 @@ thr <- 1974:2002 # these candidate thresholds maintain at least 20% of the data 
   dat <- rbind(dat1, dat2)
 
 # Run function
-  iter %>%
+  thresh %>%
     purrr::map_df(~ts.simul(dat, dat.thr, .x)) -> sim.out
+  
+  purrr::pmap_df(list(ar, iter), ~ts.simul(dat, dat.thr)) -> tt
 
 # Bin data, calculate proportion of dAIC values >= 1 in each bin
   sim.out %>%
