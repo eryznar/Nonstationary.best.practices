@@ -127,100 +127,21 @@ dat2 <- dat[dat$era=="late",]
 
 # SIMULATING TIMESERIES ---------------------------------------------------------
 
-# Specify data frame to hold function outputs
-out <- as.data.frame(matrix(NA, nrow = length(ar), ncol = 10))
-colnames(out) <- c("iter", "thr", "ar", "ar1", "AIC.1", "AIC.2", "dAIC", "dAIC.thr", "p_stat", "p_nstat")
-
-
-# Create function to simulate ts and record function outputs
-thr.fun <- function(dat.thr, thr){
-  dat.thr$era <- "early"
-  dat.thr$era[dat.thr$year > thr] <- "late"
-  
-  return(cbind(thr, dat.thr))
-}
-
-thresh %>%
-  map_df(~thr.fun(dat.thr, .x)) -> dat.thr
+# Specify moving threshold df and candidate thresholds
 
 dat.thr <- data.frame(pc1=pca$x[,1], sst.3=sst.3[names(sst.3) %in% 1965:2012], year=1965:2012)
 thr <- 1974:2002 # these candidate thresholds maintain at least 20% of the data in each era
 
 
-
-
-ar <- seq(0.2, 0.9, by = 0.1)
-iter <- seq(1, 1000, by = 1)
-
-dat <- rbind(dat1, dat2)
-
-out <- as.data.frame(matrix(NA, nrow = length(ar) * length(thr), ncol = 9))
-colnames(out) <- c("thr", "ar", "ar1", "AIC.1", "AIC.2", "dAIC", "dAIC.thr", "p_stat", "p_nstat")
-
+# Create data frame of all possible threshold*ar combinations
 expand.grid(thr = thr, ar = ar) -> cc
 
-for(ii in 1:length(ar)){
-  sim.fun <- function(dat, dat.thr, thr, ar){
-    for(ii in 1:length(thr)){
-      
-      #Generate random ts
-      ts.sim <- arima.sim(model = list(order = c(1,0,0), ar = ar), n = 48)
-      
-      #Calculate autocorrelation at lag 1
-      ar1 <- acf(ts.sim)$acf[2]
-      
-      #Generate moving threshold data
-      dat.thr$era <- "early"
-      dat.thr$era[dat.thr$year > thr[ii]] <- "late"
-      
-      #Bind simulated ts with sst and era data
-      dat %>%
-        select(!pc1) %>%
-        cbind(., ts.sim) -> sim.dat
-      
-      dat.thr %>%
-        select(!pc1) %>%
-        cbind(.,ts.sim) -> sim.dat.thr
-      
-      
-      #Run models with both terms
-      mod1 <- gls(ts.sim ~ sst, data = sim.dat, correlation = corAR1())
-      mod2 <- gls(ts.sim ~ sst*era, data = sim.dat, correlation = corAR1())
-      
-      mod1.thr <- gls(ts.sim ~ sst.3, data = sim.dat.thr, correlation = corAR1())
-      mod2.thr <- gls(ts.sim ~ sst.3*era, data = sim.dat.thr, correlation = corAR1())
-      
-      #Calculate model AICs and difference between
-      AIC.1 <- AICc(mod1)
-      AIC.2 <- AICc(mod2)
-      
-      dAIC <- AIC.1 - AIC.2
-      
-      AIC.1.thr <- AICc(mod1.thr)
-      AIC.2.thr <- AICc(mod2.thr)
-      
-      dAIC.thr <- AIC.1.thr - AIC.2.thr
-      
-      p_stat <- summary(mod1)$tTable[2,4]
-      p_nstat <- summary(mod2)$tTable[2,4]
-      
-    }
-    out <- data.frame(thr = thr[ii], ar = ar, ar1 = ar1,AIC.1 = AIC.1, AIC.2 = AIC.2, 
-                      dAIC = dAIC, dAIC.thr = dAIC.thr, p_stat = p_stat, p_nstat = p_nstat)
-    return(out)
-  }
-  
-  
-  
-  
-  ar %>%
-    map_df(sim.fun(dat, dat.thr, thr, ar))-> jj
-  
-  map2_df(cc$thr, cc$ar, sim.fun(dat, dat.thr, cc$thr, cc$ar))
-  
-  out <- as.data.frame(matrix(NA, nrow = nrow(cc), ncol = 10))
-  colnames(out) <- c("iter", "thr", "ar", "ar1", "AIC.1", "AIC.2", "dAIC", "dAIC.thr", "p_stat", "p_nstat")
-  
+# Create data frame to store function outputs
+out <- as.data.frame(matrix(NA, nrow = nrow(cc), ncol = 10))
+colnames(out) <- c("iter", "thr", "ar", "ar1", "AIC.1", "AIC.2", "dAIC", "dAIC.thr", "p_stat", "p_nstat")
+
+# Function to simulate ts at each ar, run stationary/non-stationary models on stationary window and each candidate threshold, 
+# collect/calc dAIC and p values, repeat 1000x
   sim <- function(cc, iter){
     rep(
       for(ii in 1:nrow(cc)){
@@ -273,14 +194,21 @@ for(ii in 1:length(ar)){
     
     return(out)
   }
+
+# Specify inputs
+ar <- seq(0.2, 0.9, by = 0.1)
+iter <- seq(1, 1000, by = 1)
   
+dat <- rbind(dat1, dat2)
   
-  iter %>%
+# Run function  
+iter %>%
     map_df(~sim(cc, .x)) -> jj
   
-  sim.out <- jj
-  # Bin data, calculate proportion of dAIC values >= 1 in each bin
-  sim.out %>%
+sim.out <- jj
+
+# Bin data, calculate proportion of dAIC values >= 1 in each bin
+sim.out %>%
     mutate(bin = case_when((abs(ar1) <= 0.1) ~ "≤0.1",
                            (abs(ar1) > 0.1 & abs(ar1) <= 0.2) ~ "0.11-0.2",
                            (abs(ar1) > 0.2 & abs(ar1) <= 0.3) ~ "0.21-0.3",
@@ -292,6 +220,7 @@ for(ii in 1:length(ar)){
                            (abs(ar1) > 0.8 & abs(ar1) <= 0.9) ~ "0.81-0.9",
                            (abs(ar1) > 0.9 & abs(ar1) <= 1) ~ "0.91-1")) -> binned.dat
   
+# Calculate dAIC and proportion of p < 0.05
   binned.dat %>%
     group_by(bin) %>%
     reframe(N = n(),
@@ -310,7 +239,7 @@ for(ii in 1:length(ar)){
   
   
   
-  # Plot
+# Plot
   ggplot(p.dat, aes(x = bin, y = prop_sig, color = variable, group = variable)) +
     geom_line(size = 1.25) +
     geom_point(size = 2.5)+
