@@ -81,7 +81,7 @@ levels.R = c("diagonal and equal",
 model.data = data.frame()
 
 # changing convergence criterion to ensure convergence
-# cntl.list = list(minit=200, maxit=20000, allow.degen=FALSE, conv.test.slope.tol=0.1, abstol=0.0001)
+cntl.list = list(minit=200, maxit=20000, allow.degen=FALSE, conv.test.slope.tol=0.1, abstol=0.0001)
 
 # fit models & store results
 m = 1 # single-trend models
@@ -91,7 +91,7 @@ for(R in levels.R) {
     dfa.model = list(A="zero", R=R, m=m)
     
     kemz = MARSS(dfa.dat, model=dfa.model,
-                 form="dfa", z.score=TRUE) #, control=cntl.list)
+                 form="dfa", z.score=TRUE, control=cntl.list)
     
     model.data = rbind(model.data,
                        data.frame(R=R,
@@ -115,9 +115,9 @@ write.csv(model.data, "./Output/dfa_model_selection_table.csv",
           row.names = F)
 
 # fit best model
-model.list = list(A="zero", m=1, R="unconstrained") # second-best model - this is the borealization index
+model.list = list(A="zero", m=1, R="unconstrained") 
 
-mod = MARSS(dfa.dat, model=model.list, z.score=TRUE, form="dfa")
+mod = MARSS(dfa.dat, model=model.list, z.score=TRUE, form="dfa", control=cntl.list)
 
 
 # process loadings and trend
@@ -187,6 +187,6 @@ ggplot(plot.dat, aes(year, catch, color = type)) +
   geom_point() +
   scale_color_manual(values = cb[c(2,4,6)])
 
-# interesting - similar but different!
+# interesting - same pattern but different
 
 ggsave("./Figures/PC1_DFA_comparison.png", width = 6, height = 4, units = 'in')
