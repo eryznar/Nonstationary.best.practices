@@ -1,4 +1,11 @@
 # Load catch data (updated to 2024)
+
+library(tidyverse)
+theme_set(theme_bw())
+
+# set colors
+cb <- c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
 catch <- read.csv("./Data/GOA_salmon_catch.csv") 
 
 # Process catch data
